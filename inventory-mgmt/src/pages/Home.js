@@ -1,3 +1,4 @@
+// src/pages/Home.js
 import React, { useEffect, useMemo, useState } from "react";
 import { getRoles, getInventory, getWarehouses } from "../services/api";
 import {
@@ -12,6 +13,7 @@ import {
   IconButton,
   Paper,
   Chip,
+  Button,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import { DataGrid } from "@mui/x-data-grid";
@@ -20,50 +22,90 @@ import { useNavigate } from "react-router-dom";
 export default function Home() {
   const navigate = useNavigate();
 
-  // Read saved role & token from localStorage (set during Login)
-  const savedRole = localStorage.getItem("auth_role"); // "WarehouseManager" | "WarehouseOperator"
-  const token = localStorage.getItem("auth_token");
+  // Read raw role and token from sessionStorage (clears on browser close)
+  const savedRoleRaw = sessionStorage.getItem("auth_role"); // "WarehouseManager" | "WarehouseOperator"
+  const token = sessionStorage.getItem("auth_token");
 
-  const [roles, setRoles] = useState([]);
-  const [selectedRoleId, setSelectedRoleId] = useState(savedRole || "");
-  const [rows, setRows] = useState([]);
+  // Normalize backend roles to FE ids used by roles.json ("manager" / "operator")
+  const roleMap = {
+    WarehouseManager: "manager",
+    WarehouseOperator: "operator",
+  };
+  const normalizedSavedRole = roleMap[savedRoleRaw] ?? "";
+
+  // UI state
+  const [roles, setRoles] = useState([]); // from roles.json
+  const [selectedRoleId, setSelectedRoleId] = useState(""); // start with placeholder so Select is in-range
+  const [rows, setRows] = useState([]); // inventory rows
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // 1) Load roles initially
+  // ---- Load roles; once loaded, set Select value if normalizedSavedRole exists among options ----
   useEffect(() => {
+    console.debug(
+      "[Home] roles effect: normalizedSavedRole =",
+      normalizedSavedRole
+    );
     (async () => {
       try {
         const r = await getRoles();
+        console.debug("[Home] roles loaded:", r);
         setRoles(r);
-        // If user already logged in, auto-select role if present in roles list
-        if (savedRole && r.some((role) => role.id === savedRole)) {
-          setSelectedRoleId(savedRole);
+
+        // Set the value ONLY after options exist and include it
+        if (
+          normalizedSavedRole &&
+          r.some((role) => role.id === normalizedSavedRole)
+        ) {
+          setSelectedRoleId(normalizedSavedRole);
+          console.debug("[Home] selectedRoleId set to", normalizedSavedRole);
+        } else {
+          setSelectedRoleId(""); // keep placeholder
+          console.debug("[Home] selectedRoleId set to '' (placeholder)");
         }
-      } catch {
+      } catch (e) {
         setError("Failed to load roles");
+        console.error("[Home] roles load error:", e);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [normalizedSavedRole]);
 
-  // 2) Load inventory after role selection (requires token)
+  // ---- Fetch inventory after a valid role is selected and a token is present ----
   useEffect(() => {
-    if (!selectedRoleId) return;
+    console.debug(
+      "[Home] inventory effect start; selectedRoleId =",
+      selectedRoleId,
+      "token =",
+      !!token
+    );
+
+    if (!selectedRoleId) {
+      console.debug("[Home] skip: no selectedRoleId yet");
+      return;
+    }
+
     if (!token) {
       setError("You are not logged in. Please sign in.");
       setLoading(false);
+      console.error("[Home] skip: no token in sessionStorage");
       return;
     }
+
     (async () => {
       try {
         setLoading(true);
-        const [inv] = await Promise.all([getInventory(), getWarehouses()]);
-        // Normalize inventory rows for DataGrid (support various casing)
-        const joined = (inv || []).map((p) => ({
-          id: p.productId || p.ProductId,
-          ProductId: p.productId || p.ProductId,
-          Name: p.name || p.Name,
+        console.debug("[Home] calling getInventory()");
+        const inv = await getInventory();
+        console.debug(
+          "[Home] getInventory() returned rows =",
+          (inv ?? []).length
+        );
+
+        // Normalize shapes into uniform row objects for the grid
+        const joined = (inv ?? []).map((p) => ({
+          id: p.productId ?? p.ProductId,
+          ProductId: p.productId ?? p.ProductId,
+          Name: p.name ?? p.Name,
           Price: Number(p.price ?? p.Price ?? 0),
           Stock: Number(p.stock ?? p.Stock ?? 0),
           WarehouseId:
@@ -73,10 +115,12 @@ export default function Home() {
           Location:
             p.warehouse?.location ?? p.Warehouse?.Location ?? p.Location ?? "—",
         }));
+
         setRows(joined);
       } catch (err) {
+        console.error("[Home] inventory failed:", err);
         const msg =
-          err?.response?.data || err?.message || "Failed to load inventory";
+          err?.response?.data ?? err?.message ?? "Failed to load inventory";
         setError(String(msg));
       } finally {
         setLoading(false);
@@ -84,14 +128,27 @@ export default function Home() {
     })();
   }, [selectedRoleId, token]);
 
-  // 3) Current role and permissions (from local roles.json)
+  // ---- Manual test button for API call ----
+  const manualTest = async () => {
+    try {
+      console.debug("[Home] manual test: calling getInventory()");
+      const inv = await getInventory();
+      console.debug("[Home] manual test returned rows =", (inv ?? []).length);
+      alert(`Inventory rows: ${inv?.length ?? 0}`);
+    } catch (e) {
+      console.error("[Home] manual test error:", e);
+      alert(`Error: ${e?.response?.status ?? ""} ${e?.message ?? e}`);
+    }
+  };
+
+  // ---- Current role and permissions (from roles.json) ----
   const role = useMemo(
-    () => roles.find((r) => r.id === selectedRoleId) || null,
+    () => roles.find((r) => r.id === selectedRoleId) ?? null,
     [selectedRoleId, roles]
   );
   const canEdit = role?.permissions?.canEdit === true;
 
-  // 4) Memoize base columns to avoid re-creation each render
+  // ---- Columns (memoized; array defined inside useMemo to avoid dependency warnings) ----
   const allColumns = useMemo(
     () => [
       {
@@ -188,7 +245,7 @@ export default function Home() {
     [navigate]
   );
 
-  // 5) Role-based visibility derived from memoized columns
+  // ---- Role-based visibility of the Edit column ----
   const visibleColumns = useMemo(() => {
     return canEdit
       ? allColumns
@@ -247,14 +304,15 @@ export default function Home() {
           </Alert>
         )}
 
-        {/* Role Selector (always visible; grid shows after selection) */}
+        {/* Role Selector */}
         <FormControl size="small" sx={{ minWidth: 260, mb: 3 }}>
           <InputLabel id="role-label">Choose Role</InputLabel>
           <Select
             labelId="role-label"
             label="Choose Role"
-            value={selectedRoleId}
+            value={selectedRoleId || ""} // guard to avoid out-of-range
             onChange={(e) => setSelectedRoleId(e.target.value)}
+            disabled={roles.length === 0} // disable while loading options
           >
             <MenuItem value="">
               <em>— Select —</em>
@@ -267,7 +325,17 @@ export default function Home() {
           </Select>
         </FormControl>
 
-        {/* Grid shows only after role is selected */}
+        {/* Manual test button for API call */}
+        <Button
+          variant="outlined"
+          color="secondary"
+          onClick={manualTest}
+          sx={{ mb: 2 }}
+        >
+          Test Inventory API (Console)
+        </Button>
+
+        {/* Grid shows only after a valid role is selected */}
         {selectedRoleId && (
           <Box sx={{ mt: 4 }}>
             <Typography

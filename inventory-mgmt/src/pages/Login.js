@@ -1,123 +1,233 @@
 // src/pages/Login.js
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  Box,
+  Paper,
+  Typography,
+  TextField,
+  Button,
+  Alert,
+  Divider,
+  IconButton,
+  InputAdornment,
+  FormControlLabel,
+  Checkbox,
+  Chip,
+} from "@mui/material";
+import Visibility from "@mui/icons-material/Visibility";
+import VisibilityOff from "@mui/icons-material/VisibilityOff";
+import LockOpenIcon from "@mui/icons-material/LockOpen";
+import LoginIcon from "@mui/icons-material/Login";
 import { login } from "../services/api";
 
 export default function Login() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState(""); // manager / operator
-  const [password, setPassword] = useState(""); // manager@123 / operator@123
-  const [error, setError] = useState("");
 
-  async function onSubmit(e) {
+  // UI state
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [remember, setRemember] = useState(false); // purely UI hint
+
+  const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setBusy(true);
     try {
-      await login(username, password); // saves token+role
-      navigate("/", { replace: true }); // go to Home
+      await login(username.trim(), password);
+      // Tip: sessionStorage is used in api.js, so auth clears when the browser closes.
+      navigate("/", { replace: true });
     } catch (err) {
-      const msg = err?.response?.data || "Invalid username or password";
+      const msg = err?.response?.data ?? "Invalid username or password";
       setError(String(msg));
+    } finally {
+      setBusy(false);
     }
-  }
+  };
+
+  const autofill = (role) => {
+    if (role === "manager") {
+      setUsername("manager");
+      setPassword("manager@123");
+    } else if (role === "operator") {
+      setUsername("operator");
+      setPassword("operator@123");
+    }
+  };
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "#f5f7fb",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        p: 2,
+        background:
+          "linear-gradient(135deg, #f0f4ff 0%, #e8f5e9 50%, #fffde7 100%)",
       }}
     >
-      <div
-        style={{
-          width: 360,
-          background: "#fff",
-          padding: 20,
-          borderRadius: 12,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.08)",
+      <Paper
+        elevation={8}
+        component="form"
+        onSubmit={onSubmit}
+        sx={{
+          width: "100%",
+          maxWidth: 520,
+          borderRadius: 3,
+          p: 4,
+          backdropFilter: "blur(2px)",
         }}
       >
-        <h2 style={{ textAlign: "center", margin: 0 }}>Inventory Login</h2>
-        <p style={{ textAlign: "center", color: "#666", marginTop: 6 }}>
-          Sign in to continue
-        </p>
-        <form
-          onSubmit={onSubmit}
-          style={{ display: "grid", gap: 12, marginTop: 12 }}
+        {/* Header / Welcome */}
+        <Box sx={{ textAlign: "center", mb: 2 }}>
+          <LockOpenIcon sx={{ fontSize: 40, color: "primary.main" }} />
+        </Box>
+        <Typography
+          variant="h4"
+          sx={{
+            textAlign: "center",
+            fontWeight: "bold",
+            color: "primary.main",
+          }}
         >
-          <label
-            style={{
-              display: "grid",
-              gap: 6,
-              fontWeight: 600,
-              color: "#1565c0",
-            }}
+          Welcome to Inventory Hub
+        </Typography>
+        <Typography
+          variant="subtitle1"
+          sx={{ textAlign: "center", mt: 1, color: "text.secondary" }}
+        >
+          Sign in to manage, track, and transfer with ease.
+        </Typography>
+
+        {/* Quick demo chips */}
+        <Box sx={{ display: "flex", gap: 1, justifyContent: "center", mt: 2 }}>
+          <Chip
+            label="Use Manager Demo"
+            color="primary"
+            variant="outlined"
+            onClick={() => autofill("manager")}
+            size="small"
+          />
+          <Chip
+            label="Use Operator Demo"
+            color="success"
+            variant="outlined"
+            onClick={() => autofill("operator")}
+            size="small"
+          />
+        </Box>
+
+        <Divider sx={{ my: 3 }} />
+
+        {/* Error area */}
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
+
+        {/* Inputs */}
+        <TextField
+          label="Username"
+          placeholder="manager / operator"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoFocus
+          fullWidth
+          required
+          autoComplete="username"
+          sx={{ mb: 2 }}
+        />
+
+        <TextField
+          label="Password"
+          placeholder="manager@123 / operator@123"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type={showPwd ? "text" : "password"}
+          fullWidth
+          required
+          autoComplete="current-password"
+          sx={{ mb: 1 }}
+          InputProps={{
+            endAdornment: (
+              <InputAdornment position="end">
+                <IconButton
+                  aria-label={showPwd ? "Hide password" : "Show password"}
+                  onClick={() => setShowPwd((s) => !s)}
+                  edge="end"
+                >
+                  {showPwd ? <VisibilityOff /> : <Visibility />}
+                </IconButton>
+              </InputAdornment>
+            ),
+          }}
+        />
+
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            mb: 2,
+          }}
+        >
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+            }
+            label="Remember me (this tab)"
+          />
+          <Button
+            color="inherit"
+            size="small"
+            onClick={() =>
+              alert("Forgot password flow can be implemented here.")
+            }
           >
-            Username
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="manager / operator"
-              autoComplete="username"
-              style={{
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: "1px solid #90caf9",
-              }}
-            />
-          </label>
-          <label
-            style={{
-              display: "grid",
-              gap: 6,
-              fontWeight: 600,
-              color: "#1565c0",
-            }}
-          >
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="manager@123 / operator@123"
-              autoComplete="current-password"
-              style={{
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: "1px solid #90caf9",
-              }}
-            />
-          </label>
-          {error && (
-            <div
-              style={{
-                color: "#b00020",
-                background: "#fdecea",
-                padding: 8,
-                borderRadius: 8,
-              }}
-            >
-              {error}
-            </div>
-          )}
-          <button
-            type="submit"
-            style={{
-              background: "linear-gradient(90deg, #3f51b5, #2196f3)",
-              color: "white",
-              border: "none",
-              padding: "10px 12px",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            Sign In
-          </button>
-        </form>
-      </div>
-    </div>
+            Forgot password?
+          </Button>
+        </Box>
+
+        {/* Submit */}
+        <Button
+          type="submit"
+          variant="contained"
+          endIcon={<LoginIcon />}
+          disabled={busy}
+          fullWidth
+          sx={{
+            py: 1.2,
+            fontWeight: 700,
+            borderRadius: 2,
+            background:
+              "linear-gradient(90deg, rgba(25,118,210,1) 0%, rgba(56,142,60,1) 100%)",
+          }}
+        >
+          {busy ? "Signing in..." : "Sign In"}
+        </Button>
+
+        {/* Helper text */}
+        <Typography
+          variant="caption"
+          sx={{
+            mt: 2,
+            display: "block",
+            textAlign: "center",
+            color: "text.secondary",
+          }}
+        >
+          Tip: Use <strong>manager / manager@123</strong> or{" "}
+          <strong>operator / operator@123</strong>.
+        </Typography>
+      </Paper>
+    </Box>
   );
 }

@@ -5,7 +5,7 @@ import TransferPage from "./pages/Transfer";
 import LoginPage from "./pages/Login";
 
 function ProtectedRoute({ children }) {
-  const token = localStorage.getItem("auth_token");
+  const token = sessionStorage.getItem("auth_token");
   if (!token) return <Navigate to="/login" replace />;
   return children;
 }
@@ -30,7 +30,7 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }
