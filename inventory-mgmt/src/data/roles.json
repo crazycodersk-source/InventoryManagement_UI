@@ -1,0 +1,14 @@
+{
+  "roles": [
+    {
+      "id": "manager",
+      "label": "Warehouse manager",
+      "permissions": { "canEdit": true }
+    },
+    {
+      "id": "operator",
+      "label": "Warehouse operator",
+      "permissions": { "canEdit": false }
+    }
+  ]
+}

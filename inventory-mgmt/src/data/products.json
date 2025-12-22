@@ -1,0 +1,23 @@
+[
+  {
+    "ProductId": 1,
+    "Name": "Widget A",
+    "Price": 99.5,
+    "Stock": 50,
+    "WarehouseId": 1
+  },
+  {
+    "ProductId": 2,
+    "Name": "Gadget B",
+    "Price": 199.0,
+    "Stock": 20,
+    "WarehouseId": 2
+  },
+  {
+    "ProductId": 3,
+    "Name": "Bolt C",
+    "Price": 9.0,
+    "Stock": 500,
+    "WarehouseId": 1
+  }
+]
