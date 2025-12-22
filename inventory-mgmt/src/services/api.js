@@ -1,41 +1,53 @@
+// src/services/api.js
+import axios from "axios";
 
-// src/services/api.jsx
-
-/**
- * Local-first service layer with API toggle via .env
- *
- * .env examples:
- *   REACT_APP_USE_LOCAL=true
- *   REACT_APP_API_BASE_URL=http://localhost:5001
- *
- * When REACT_APP_USE_LOCAL=true, all functions read from local JSON.
- * When false, functions call API, but will gracefully fall back to local
- * if the backend is not reachable.
- */
-
-// --- Imports (ESLint: import/first) ---
+// ---- Local JSON (for USE_LOCAL mode) ----
 import rolesLocal from "../data/roles.json";
 import productsLocal from "../data/products.json";
 import warehousesLocal from "../data/warehouses.json";
 
-// --- Env flags ---
+// ---- Environment flags ----
 const USE_LOCAL =
   String(process.env.REACT_APP_USE_LOCAL || "true").toLowerCase() === "true";
+const BASE_URL =
+  process.env.REACT_APP_API_BASE_URL?.trim() || "http://localhost:5115";
 
-const BASE =
-  process.env.REACT_APP_API_BASE_URL?.trim() || "http://localhost:5001";
+// ---- Axios instance ----
+const api = axios.create({
+  baseURL: BASE_URL,
+  headers: { "Content-Type": "application/json" },
+});
 
-// --- Helpers ---
-async function safeJson(res) {
-  try {
-    return await res.json();
-  } catch {
-    return null;
+// Attach JWT token to every request, if present
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("auth_token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`; // <-- critical for authorized endpoints
   }
-}
+  return config;
+});
 
+// Optional: handle 401 globally (redirect to /login)
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.response?.status === 401) {
+      // Token invalid/expired → clear and redirect
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("auth_role");
+      // Use hard redirect to avoid stale app state
+      if (typeof window !== "undefined") window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Helpers (local mode): attach warehouse objects to products for UI convenience
+// -----------------------------------------------------------------------------
 function attachWarehouseToProducts(products, warehouses) {
-  const wm = new Map(warehouses.map((w) => [Number(w.WarehouseId), w]));
+  // Local JSON typically uses PascalCase (ProductId, WarehouseId, Location, etc.)
+  const wm = new Map((warehouses ?? []).map((w) => [Number(w.WarehouseId), w]));
   return (products ?? []).map((p) => {
     const wid = Number(p.WarehouseId);
     return {
@@ -45,35 +57,26 @@ function attachWarehouseToProducts(products, warehouses) {
   });
 }
 
-// --- API call implementations (used only when USE_LOCAL=false) ---
-async function apiGetInventory() {
-  const res = await fetch(`${BASE}/inventory`, { method: "GET" });
-  if (!res.ok) throw new Error(`GET /inventory failed: ${res.status}`);
-  const data = await safeJson(res);
-  return Array.isArray(data) ? data : [];
+// -----------------------------------------------------------------------------
+// AUTH
+// -----------------------------------------------------------------------------
+export async function login(username, password) {
+  // Matches [Route("api/[controller]/[action]")] → POST /api/Auth/Login
+  const { data } = await api.post("/api/Auth/Login", { username, password });
+  // Expected: { token, role }
+  localStorage.setItem("auth_token", data.token);
+  localStorage.setItem("auth_role", data.role);
+  return data;
 }
 
-async function apiGetWarehouses() {
-  const res = await fetch(`${BASE}/warehouses`, { method: "GET" });
-  if (!res.ok) throw new Error(`GET /warehouses failed: ${res.status}`);
-  const data = await safeJson(res);
-  return Array.isArray(data) ? data : [];
+export function logout() {
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("auth_role");
 }
 
-async function apiTransferProduct({ productId, toWarehouseId }) {
-  const res = await fetch(`${BASE}/inventory/transfer`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ productId, toWarehouseId }),
-  });
-  if (!res.ok) {
-    const msg = (await res.text().catch(() => "")) || "";
-    throw new Error(`Transfer failed: ${res.status} ${msg}`);
-  }
-  return (await safeJson(res)) ?? { ok: true };
-}
-
-// --- Public services (local-first with safe fallbacks) ---
+// -----------------------------------------------------------------------------
+// INVENTORY (API-first when USE_LOCAL=false)
+// -----------------------------------------------------------------------------
 export async function getRoles() {
   // Local file shape: { "roles": [ { id, label, permissions? }, ... ] }
   return rolesLocal?.roles ?? [];
@@ -82,9 +85,10 @@ export async function getRoles() {
 export async function getWarehouses() {
   if (USE_LOCAL) return warehousesLocal;
 
-  // API mode with fallback to local
+  // API mode with safe fallback to local JSON
   try {
-    const data = await apiGetWarehouses();
+    // Matches GET /api/Inventory/GetAllWarehouses
+    const { data } = await api.get("/api/Inventory/GetAllWarehouses");
     return Array.isArray(data) ? data : warehousesLocal;
   } catch {
     return warehousesLocal;
@@ -93,39 +97,34 @@ export async function getWarehouses() {
 
 export async function getInventory() {
   if (USE_LOCAL) {
+    // Local mode: fuse product + warehouse data for a richer grid
     return attachWarehouseToProducts(productsLocal, warehousesLocal);
   }
 
-  // API mode with fallback to local
+  // API mode with safe fallback to local JSON
   try {
-    const [apiInv, apiWhs] = await Promise.all([
-      apiGetInventory(),
-      apiGetWarehouses(),
+    // Matches GET /api/Inventory/GetAll
+    const [{ data: apiInv }, { data: apiWhs }] = await Promise.all([
+      api.get("/api/Inventory/GetAll"),
+      api.get("/api/Inventory/GetAllWarehouses"),
     ]);
-    const inv = attachWarehouseToProducts(apiInv, apiWhs);
-    return Array.isArray(inv) ? inv : attachWarehouseToProducts(productsLocal, warehousesLocal);
+
+    const inv = attachWarehouseToProducts(apiInv ?? [], apiWhs ?? []);
+    return Array.isArray(inv)
+      ? inv
+      : attachWarehouseToProducts(productsLocal, warehousesLocal);
   } catch {
     return attachWarehouseToProducts(productsLocal, warehousesLocal);
   }
 }
 
-export async function transferProduct(payload) {
-  const { productId, toWarehouseId } = payload;
-
+// Optional (Manager-only): Update product via API
+export async function updateProduct(product) {
   if (USE_LOCAL) {
-    // Simulate success; no persistence (client-side only)
-    const target = warehousesLocal.find(
-      (w) => Number(w.WarehouseId) === Number(toWarehouseId)
-    );
-    return {
-      ok: true,
-      productId: Number(productId),
-      toWarehouseId: Number(toWarehouseId),
-      Location: target?.Location || "—",
-      message: "Local transfer simulated successfully.",
-    };
+    // Local mode: simulate success (no persistence)
+    return { ok: true, message: "Local update simulated." };
   }
-
-  // API mode
-   return apiTransferProduct({ productId, toWarehouseId });
+  // Matches POST /api/Inventory/Update with [Authorize(Roles = "WarehouseManager")]
+  const { data } = await api.post("/api/Inventory/Update", product);
+  return data;
 }

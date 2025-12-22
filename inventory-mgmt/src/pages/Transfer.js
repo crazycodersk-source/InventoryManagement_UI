@@ -13,7 +13,7 @@ import {
   Alert,
   Divider,
 } from "@mui/material";
-import { getInventory, getWarehouses, transferProduct } from "../services/api";
+import { getInventory, getWarehouses, updateProduct } from "../services/api";
 
 export default function TransferPage() {
   const [searchParams] = useSearchParams();
@@ -42,12 +42,13 @@ export default function TransferPage() {
       ),
     [warehouses]
   );
+
   const productMap = useMemo(
     () => new Map((products ?? []).map((p) => [Number(p.ProductId), p])),
     [products]
   );
 
-  // Load local data
+  // Load inventory & warehouses (uses token via axios interceptor)
   useEffect(() => {
     let mounted = true;
     async function load() {
@@ -59,7 +60,9 @@ export default function TransferPage() {
         setProducts(inv || []);
       } catch (err) {
         if (!mounted) return;
-        setErrorMsg(`Failed to load data: ${err?.message || err}`);
+        setErrorMsg(
+          `Failed to load data: ${err?.response?.data || err?.message || err}`
+        );
       } finally {
         if (mounted) setLoading(false);
       }
@@ -75,10 +78,9 @@ export default function TransferPage() {
     if (!selectedProductId) return warehouses;
     const p = productMap.get(Number(selectedProductId));
     if (!p) return warehouses;
+    const currentWid = Number(p.Warehouse?.WarehouseId ?? p.WarehouseId);
     return (warehouses ?? []).filter(
-      (w) =>
-        Number(w.WarehouseId) !==
-        Number(p.Warehouse?.WarehouseId ?? p.WarehouseId)
+      (w) => Number(w.WarehouseId) !== currentWid
     );
   }, [selectedProductId, warehouses, productMap]);
 
@@ -93,50 +95,60 @@ export default function TransferPage() {
     }
 
     try {
-      const result = await transferProduct({
-        productId: Number(selectedProductId),
-        toWarehouseId: Number(selectedToWarehouseId),
-      });
-
-      if (result?.ok) {
-        const prod = productMap.get(Number(selectedProductId));
-        const fromLoc =
-          warehouseMap.get(
-            Number(prod?.Warehouse?.WarehouseId ?? prod?.WarehouseId)
-          ) || "—";
-        const toLoc =
-          warehouseMap.get(Number(selectedToWarehouseId)) ||
-          result?.Location ||
-          "—";
-
-        setSuccessMsg(
-          `Transfer simulated: "${prod?.Name}" moved from ${fromLoc} to ${toLoc}.`
-        );
-
-        // Update client-side inventory snapshot
-        setProducts((prev) =>
-          prev.map((p) =>
-            Number(p.ProductId) === Number(selectedProductId)
-              ? {
-                  ...p,
-                  WarehouseId: Number(selectedToWarehouseId),
-                  Warehouse: {
-                    ...(p.Warehouse ?? {}),
-                    WarehouseId: Number(selectedToWarehouseId),
-                    Location: toLoc,
-                  },
-                }
-              : p
-          )
-        );
-
-        setSelectedProductId("");
-        setSelectedToWarehouseId("");
-      } else {
-        setErrorMsg("Transfer failed.");
+      const prod = productMap.get(Number(selectedProductId));
+      if (!prod) {
+        setErrorMsg("Product not found.");
+        return;
       }
+
+      // Build the payload expected by your API's Update endpoint
+      // NOTE: keep PascalCase property names to match your backend DTO/model where applicable
+      const updated = {
+        ProductId: prod.ProductId,
+        Name: prod.Name,
+        Price: prod.Price,
+        Stock: prod.Stock,
+        WarehouseId: Number(selectedToWarehouseId),
+        // Include nested Warehouse object only if your API tolerates it;
+        // many APIs ignore navigation properties in updates.
+        // Warehouse: { WarehouseId: Number(selectedToWarehouseId) },
+      };
+
+      // Manager-only endpoint; JWT is added by axios interceptor
+      await updateProduct(updated);
+
+      // Optimistic UI update in the client
+      const fromLoc =
+        warehouseMap.get(
+          Number(prod?.Warehouse?.WarehouseId ?? prod?.WarehouseId)
+        ) || "—";
+      const toLoc = warehouseMap.get(Number(selectedToWarehouseId)) || "—";
+
+      setSuccessMsg(
+        `Updated: "${prod.Name}" moved from ${fromLoc} to ${toLoc}.`
+      );
+
+      setProducts((prev) =>
+        prev.map((p) =>
+          Number(p.ProductId) === Number(selectedProductId)
+            ? {
+                ...p,
+                WarehouseId: Number(selectedToWarehouseId),
+                Warehouse: {
+                  ...(p.Warehouse || {}),
+                  WarehouseId: Number(selectedToWarehouseId),
+                  Location: toLoc,
+                },
+              }
+            : p
+        )
+      );
+
+      // Reset form
+      setSelectedProductId("");
+      setSelectedToWarehouseId("");
     } catch (err) {
-      setErrorMsg(err?.message || "Transfer failed.");
+      setErrorMsg(err?.response?.data || err?.message || "Update failed.");
     }
   }
 
@@ -145,10 +157,8 @@ export default function TransferPage() {
       <Typography variant="h4" gutterBottom>
         Transfer Product
       </Typography>
-
       <Alert severity="info" sx={{ mb: 2 }}>
-        Local Mode: Using JSON files from <code>src/data</code>. Toggle API via{" "}
-        <code>.env</code>.
+        This page uses your JWT token (from login) to call the API.
       </Alert>
 
       {loading ? (
@@ -231,10 +241,11 @@ export default function TransferPage() {
                   color="text.secondary"
                   sx={{ mb: 1 }}
                 >
-                  Shows current warehouse per product (client-side updated after
-                  transfer).
+                  Shows current warehouse per product. After a successful update
+                  we refresh the client-side snapshot.
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
+
                 {(products ?? []).map((p) => (
                   <Box
                     key={p.ProductId}
