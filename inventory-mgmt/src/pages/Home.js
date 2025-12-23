@@ -1,11 +1,5 @@
-// src/pages/Home.js
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  getRoles,
-  getInventory,
-  exportInventoryReport,
-  logout,
-} from "../services/api";
+import { getInventory, exportInventoryReport, logout } from "../services/api";
 import {
   Box,
   Typography,
@@ -30,23 +24,23 @@ import PersonIcon from "@mui/icons-material/Person";
 import { DataGrid } from "@mui/x-data-grid";
 import { useNavigate } from "react-router-dom";
 
+const ROLE_OPTIONS = [
+  { id: "WarehouseManager", label: "Manager", canEdit: true },
+  { id: "WarehouseOperator", label: "Operator", canEdit: false },
+];
+
 export default function Home() {
   const navigate = useNavigate();
 
-  // token & backend role from sessionStorage
+  // Get role from session (set at login)
   const savedRoleRaw = sessionStorage.getItem("auth_role"); // "WarehouseManager" | "WarehouseOperator"
   const token = sessionStorage.getItem("auth_token");
 
-  // map backend role -> FE ids ("manager" / "operator")
-  const roleMap = {
-    WarehouseManager: "manager",
-    WarehouseOperator: "operator",
-  };
-  const normalizedSavedRole = roleMap[savedRoleRaw] ?? "";
+  // Find the role object for UI
+  const selectedRole =
+    ROLE_OPTIONS.find((r) => r.id === savedRoleRaw) || ROLE_OPTIONS[0];
 
   // UI state
-  const [roles, setRoles] = useState([]);
-  const [selectedRoleId, setSelectedRoleId] = useState(""); // placeholder initially
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false); // grid/data loading
   const [exportBusy, setExportBusy] = useState(false); // disables button during export
@@ -57,30 +51,9 @@ export default function Home() {
     if (!token) navigate("/login");
   }, [token, navigate]);
 
-  // load roles; preselect based on backend role and keep Select disabled
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await getRoles();
-        setRoles(r);
-        if (
-          normalizedSavedRole &&
-          r.some((role) => role.id === normalizedSavedRole)
-        ) {
-          setSelectedRoleId(normalizedSavedRole);
-        } else {
-          setSelectedRoleId(""); // placeholder keeps Select in-range
-        }
-      } catch (e) {
-        setError("Failed to load roles");
-        console.log("[Home] roles load error:", e);
-      }
-    })();
-  }, [normalizedSavedRole]);
-
   // fetch inventory after a valid role and token
   useEffect(() => {
-    if (!selectedRoleId) return;
+    if (!selectedRole?.id) return;
     if (!token) {
       setError("You are not logged in. Please sign in.");
       setLoading(false);
@@ -109,22 +82,7 @@ export default function Home() {
         setLoading(false);
       }
     })();
-  }, [selectedRoleId, token]);
-
-  // current role object & permissions
-  const role = useMemo(
-    () => roles.find((r) => r.id === selectedRoleId) ?? null,
-    [selectedRoleId, roles]
-  );
-  const canEdit = role?.permissions?.canEdit === true; // Manager -> true
-
-  // Role icons
-  const roleIconMap = {
-    manager: (
-      <SupervisorAccountIcon sx={{ color: "#1976d2" }} fontSize="medium" />
-    ),
-    operator: <PersonIcon sx={{ color: "#388e3c" }} fontSize="medium" />,
-  };
+  }, [selectedRole, token]);
 
   // Export handler (Managers only)
   const handleExport = async () => {
@@ -238,7 +196,7 @@ export default function Home() {
               size="small"
               onClick={() =>
                 navigate(`/transfer?productId=${params.row.ProductId}`, {
-                  state: { product: params.row }, // pass full row to prefill Transfer page
+                  state: { product: params.row }, // prefill Transfer page
                 })
               }
               aria-label={`Transfer ${params.row.Name}`}
@@ -252,11 +210,23 @@ export default function Home() {
     [navigate]
   );
 
-  const visibleColumns = useMemo(() => {
-    return canEdit
-      ? allColumns
-      : allColumns.filter((c) => c.field !== "actions");
-  }, [canEdit, allColumns]);
+  const visibleColumns = useMemo(
+    () =>
+      selectedRole?.canEdit
+        ? allColumns
+        : allColumns.filter((c) => c.field !== "actions"),
+    [selectedRole, allColumns]
+  );
+
+  // Role icons for dropdown
+  const roleIconMap = {
+    WarehouseManager: (
+      <SupervisorAccountIcon sx={{ color: "#1976d2" }} fontSize="medium" />
+    ),
+    WarehouseOperator: (
+      <PersonIcon sx={{ color: "#388e3c" }} fontSize="medium" />
+    ),
+  };
 
   return (
     <Box
@@ -318,7 +288,6 @@ export default function Home() {
           alignItems="center"
           sx={{ mb: 3 }}
         >
-          {/* Role Select: subtle border, perfect alignment, disabled */}
           <FormControl
             size="small"
             variant="outlined"
@@ -327,7 +296,7 @@ export default function Home() {
               background: "linear-gradient(90deg, #e3f2fd 0%, #e8f5e9 100%)",
               borderRadius: 2,
               boxShadow: "0 2px 8px rgba(25,118,210,0.07)",
-              border: "1.5px solid #e0e0e0", // subtle border (no blue highlight)
+              border: "1.5px solid #e0e0e0",
             }}
           >
             <InputLabel
@@ -339,9 +308,8 @@ export default function Home() {
             <Select
               labelId="role-label"
               label="Role"
-              value={selectedRoleId || ""} // shows resolved role
-              onChange={(e) => setSelectedRoleId(e.target.value)}
-              disabled // locked after login
+              value={selectedRole?.id || ""}
+              disabled
               sx={{
                 fontWeight: 700,
                 color: "#1976d2",
@@ -357,7 +325,7 @@ export default function Home() {
                 background: "transparent",
               }}
               renderValue={(value) => {
-                const r = roles.find((role) => role.id === value);
+                const r = ROLE_OPTIONS.find((role) => role.id === value);
                 return (
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                     {roleIconMap[value]}
@@ -368,10 +336,7 @@ export default function Home() {
                 );
               }}
             >
-              <MenuItem value="">
-                <em>— Select —</em>
-              </MenuItem>
-              {roles.map((r) => (
+              {ROLE_OPTIONS.map((r) => (
                 <MenuItem key={r.id} value={r.id}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                     {roleIconMap[r.id]}
@@ -382,7 +347,7 @@ export default function Home() {
             </Select>
           </FormControl>
 
-          {canEdit && (
+          {selectedRole?.canEdit && (
             <Tooltip title="Export to Excel">
               <span>
                 <Button
@@ -438,7 +403,7 @@ export default function Home() {
         </Stack>
 
         {/* Grid */}
-        {selectedRoleId && (
+        {selectedRole?.id && (
           <Box sx={{ mt: 2 }}>
             <Typography
               variant="h6"
