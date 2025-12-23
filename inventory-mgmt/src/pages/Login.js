@@ -35,13 +35,29 @@ export default function Login() {
   const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
+
+    // basic guard to avoid empty / whitespace creds
+    const u = username.trim();
+    const p = password; // keep password as typed
+    if (!u || !p) {
+      setError("Please enter both username and password.");
+      return;
+    }
+
+    if (busy) return; // guard double-click
     setBusy(true);
+
     try {
-      await login(username.trim(), password);
-      // Tip: sessionStorage is used in api.js, so auth clears when the browser closes.
+      console.log("[Login] attempting", { username: u });
+      const res = await login(u, p); // { token, role }
+      console.log("[Login] success", res);
+
+      // Tip: sessionStorage is used in api.js, so auth clears when the tab closes.
+      // 'remember' is currently visual only; not changing storage mechanism per your preference.
       navigate("/", { replace: true });
     } catch (err) {
       const msg = err?.response?.data ?? "Invalid username or password";
+      console.log("[Login] error:", err);
       setError(String(msg));
     } finally {
       setBusy(false);
@@ -141,6 +157,7 @@ export default function Login() {
           required
           autoComplete="username"
           sx={{ mb: 2 }}
+          inputProps={{ "aria-label": "username" }}
         />
 
         <TextField

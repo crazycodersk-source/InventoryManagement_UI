@@ -1,6 +1,11 @@
 // src/pages/Home.js
 import React, { useEffect, useMemo, useState } from "react";
-import { getRoles, getInventory, getWarehouses } from "../services/api";
+import {
+  getRoles,
+  getInventory,
+  exportInventoryReport,
+  logout,
+} from "../services/api";
 import {
   Box,
   Typography,
@@ -13,20 +18,26 @@ import {
   IconButton,
   Paper,
   Chip,
+  Stack,
   Button,
+  CircularProgress,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
+import DownloadIcon from "@mui/icons-material/Download";
+import LogoutIcon from "@mui/icons-material/Logout";
+import SupervisorAccountIcon from "@mui/icons-material/SupervisorAccount";
+import PersonIcon from "@mui/icons-material/Person";
 import { DataGrid } from "@mui/x-data-grid";
 import { useNavigate } from "react-router-dom";
 
 export default function Home() {
   const navigate = useNavigate();
 
-  // Read raw role and token from sessionStorage (clears on browser close)
+  // token & backend role from sessionStorage
   const savedRoleRaw = sessionStorage.getItem("auth_role"); // "WarehouseManager" | "WarehouseOperator"
   const token = sessionStorage.getItem("auth_token");
 
-  // Normalize backend roles to FE ids used by roles.json ("manager" / "operator")
+  // map backend role -> FE ids ("manager" / "operator")
   const roleMap = {
     WarehouseManager: "manager",
     WarehouseOperator: "operator",
@@ -34,91 +45,63 @@ export default function Home() {
   const normalizedSavedRole = roleMap[savedRoleRaw] ?? "";
 
   // UI state
-  const [roles, setRoles] = useState([]); // from roles.json
-  const [selectedRoleId, setSelectedRoleId] = useState(""); // start with placeholder so Select is in-range
-  const [rows, setRows] = useState([]); // inventory rows
-  const [loading, setLoading] = useState(false);
+  const [roles, setRoles] = useState([]);
+  const [selectedRoleId, setSelectedRoleId] = useState(""); // placeholder initially
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false); // grid/data loading
+  const [exportBusy, setExportBusy] = useState(false); // disables button during export
   const [error, setError] = useState("");
 
-  // ---- Load roles; once loaded, set Select value if normalizedSavedRole exists among options ----
+  // redirect to login if not authenticated
   useEffect(() => {
-    console.debug(
-      "[Home] roles effect: normalizedSavedRole =",
-      normalizedSavedRole
-    );
+    if (!token) navigate("/login");
+  }, [token, navigate]);
+
+  // load roles; preselect based on backend role and keep Select disabled
+  useEffect(() => {
     (async () => {
       try {
         const r = await getRoles();
-        console.debug("[Home] roles loaded:", r);
         setRoles(r);
-
-        // Set the value ONLY after options exist and include it
         if (
           normalizedSavedRole &&
           r.some((role) => role.id === normalizedSavedRole)
         ) {
           setSelectedRoleId(normalizedSavedRole);
-          console.debug("[Home] selectedRoleId set to", normalizedSavedRole);
         } else {
-          setSelectedRoleId(""); // keep placeholder
-          console.debug("[Home] selectedRoleId set to '' (placeholder)");
+          setSelectedRoleId(""); // placeholder keeps Select in-range
         }
       } catch (e) {
         setError("Failed to load roles");
-        console.error("[Home] roles load error:", e);
+        console.log("[Home] roles load error:", e);
       }
     })();
   }, [normalizedSavedRole]);
 
-  // ---- Fetch inventory after a valid role is selected and a token is present ----
+  // fetch inventory after a valid role and token
   useEffect(() => {
-    console.debug(
-      "[Home] inventory effect start; selectedRoleId =",
-      selectedRoleId,
-      "token =",
-      !!token
-    );
-
-    if (!selectedRoleId) {
-      console.debug("[Home] skip: no selectedRoleId yet");
-      return;
-    }
-
+    if (!selectedRoleId) return;
     if (!token) {
       setError("You are not logged in. Please sign in.");
       setLoading(false);
-      console.error("[Home] skip: no token in sessionStorage");
       return;
     }
-
     (async () => {
       try {
         setLoading(true);
-        console.debug("[Home] calling getInventory()");
         const inv = await getInventory();
-        console.debug(
-          "[Home] getInventory() returned rows =",
-          (inv ?? []).length
-        );
-
-        // Normalize shapes into uniform row objects for the grid
-        const joined = (inv ?? []).map((p) => ({
+        const mapped = (inv ?? []).map((p) => ({
           id: p.productId ?? p.ProductId,
           ProductId: p.productId ?? p.ProductId,
           Name: p.name ?? p.Name,
-          Price: Number(p.price ?? p.Price ?? 0),
-          Stock: Number(p.stock ?? p.Stock ?? 0),
-          WarehouseId:
-            p.warehouse?.warehouseId ??
-            p.Warehouse?.WarehouseId ??
-            p.WarehouseId,
-          Location:
-            p.warehouse?.location ?? p.Warehouse?.Location ?? p.Location ?? "—",
+          Price: Number.parseFloat(p.price ?? p.Price ?? 0),
+          Stock: Number.parseInt(p.stock ?? p.Stock ?? 0, 10),
+          WarehouseId: p.warehouseId ?? p.WarehouseId,
+          Location: p.location ?? p.Location,
         }));
-
-        setRows(joined);
+        setRows(mapped);
+        setError("");
       } catch (err) {
-        console.error("[Home] inventory failed:", err);
         const msg =
           err?.response?.data ?? err?.message ?? "Failed to load inventory";
         setError(String(msg));
@@ -128,27 +111,49 @@ export default function Home() {
     })();
   }, [selectedRoleId, token]);
 
-  // ---- Manual test button for API call ----
-  const manualTest = async () => {
-    try {
-      console.debug("[Home] manual test: calling getInventory()");
-      const inv = await getInventory();
-      console.debug("[Home] manual test returned rows =", (inv ?? []).length);
-      alert(`Inventory rows: ${inv?.length ?? 0}`);
-    } catch (e) {
-      console.error("[Home] manual test error:", e);
-      alert(`Error: ${e?.response?.status ?? ""} ${e?.message ?? e}`);
-    }
-  };
-
-  // ---- Current role and permissions (from roles.json) ----
+  // current role object & permissions
   const role = useMemo(
     () => roles.find((r) => r.id === selectedRoleId) ?? null,
     [selectedRoleId, roles]
   );
-  const canEdit = role?.permissions?.canEdit === true;
+  const canEdit = role?.permissions?.canEdit === true; // Manager -> true
 
-  // ---- Columns (memoized; array defined inside useMemo to avoid dependency warnings) ----
+  // Role icons
+  const roleIconMap = {
+    manager: (
+      <SupervisorAccountIcon sx={{ color: "#1976d2" }} fontSize="medium" />
+    ),
+    operator: <PersonIcon sx={{ color: "#388e3c" }} fontSize="medium" />,
+  };
+
+  // Export handler (Managers only)
+  const handleExport = async () => {
+    try {
+      setExportBusy(true);
+      const { blob, filename } = await exportInventoryReport();
+      const url = window.URL.createObjectURL(new Blob([blob]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || "Inventories.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const msg = err?.response?.data ?? err?.message ?? "Export failed";
+      setError(String(msg));
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  // Logout
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
+
+  // Grid columns
   const allColumns = useMemo(
     () => [
       {
@@ -232,7 +237,9 @@ export default function Home() {
               color="primary"
               size="small"
               onClick={() =>
-                navigate(`/transfer?productId=${params.row.ProductId}`)
+                navigate(`/transfer?productId=${params.row.ProductId}`, {
+                  state: { product: params.row }, // pass full row to prefill Transfer page
+                })
               }
               aria-label={`Transfer ${params.row.Name}`}
             >
@@ -245,7 +252,6 @@ export default function Home() {
     [navigate]
   );
 
-  // ---- Role-based visibility of the Edit column ----
   const visibleColumns = useMemo(() => {
     return canEdit
       ? allColumns
@@ -304,47 +310,142 @@ export default function Home() {
           </Alert>
         )}
 
-        {/* Role Selector */}
-        <FormControl size="small" sx={{ minWidth: 260, mb: 3 }}>
-          <InputLabel id="role-label">Choose Role</InputLabel>
-          <Select
-            labelId="role-label"
-            label="Choose Role"
-            value={selectedRoleId || ""} // guard to avoid out-of-range
-            onChange={(e) => setSelectedRoleId(e.target.value)}
-            disabled={roles.length === 0} // disable while loading options
-          >
-            <MenuItem value="">
-              <em>— Select —</em>
-            </MenuItem>
-            {roles.map((r) => (
-              <MenuItem key={r.id} value={r.id}>
-                {r.label}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        {/* Manual test button for API call */}
-        <Button
-          variant="outlined"
-          color="secondary"
-          onClick={manualTest}
-          sx={{ mb: 2 }}
+        {/* Role Selector (disabled) + Manager-only Export + Logout */}
+        <Stack
+          direction="row"
+          spacing={2}
+          justifyContent="center"
+          alignItems="center"
+          sx={{ mb: 3 }}
         >
-          Test Inventory API (Console)
-        </Button>
+          {/* Role Select: subtle border, perfect alignment, disabled */}
+          <FormControl
+            size="small"
+            variant="outlined"
+            sx={{
+              minWidth: 320,
+              background: "linear-gradient(90deg, #e3f2fd 0%, #e8f5e9 100%)",
+              borderRadius: 2,
+              boxShadow: "0 2px 8px rgba(25,118,210,0.07)",
+              border: "1.5px solid #e0e0e0", // subtle border (no blue highlight)
+            }}
+          >
+            <InputLabel
+              id="role-label"
+              sx={{ fontWeight: 700, color: "#1976d2" }}
+            >
+              Role
+            </InputLabel>
+            <Select
+              labelId="role-label"
+              label="Role"
+              value={selectedRoleId || ""} // shows resolved role
+              onChange={(e) => setSelectedRoleId(e.target.value)}
+              disabled // locked after login
+              sx={{
+                fontWeight: 700,
+                color: "#1976d2",
+                fontSize: 18,
+                "& .MuiSelect-select": {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  paddingLeft: "12px",
+                },
+                ".MuiSelect-icon": { color: "#1976d2" },
+                ".Mui-disabled": { color: "#1976d2" },
+                background: "transparent",
+              }}
+              renderValue={(value) => {
+                const r = roles.find((role) => role.id === value);
+                return (
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                    {roleIconMap[value]}
+                    <span style={{ fontWeight: 700, fontSize: 18 }}>
+                      {r?.label || "—"}
+                    </span>
+                  </Box>
+                );
+              }}
+            >
+              <MenuItem value="">
+                <em>— Select —</em>
+              </MenuItem>
+              {roles.map((r) => (
+                <MenuItem key={r.id} value={r.id}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                    {roleIconMap[r.id]}
+                    <span style={{ fontWeight: 700 }}>{r.label}</span>
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-        {/* Grid shows only after a valid role is selected */}
+          {canEdit && (
+            <Tooltip title="Export to Excel">
+              <span>
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  startIcon={
+                    exportBusy ? (
+                      <CircularProgress size={16} sx={{ color: "#1976d2" }} />
+                    ) : (
+                      <DownloadIcon />
+                    )
+                  }
+                  onClick={handleExport}
+                  disabled={exportBusy}
+                  aria-busy={exportBusy}
+                  sx={{
+                    fontWeight: 700,
+                    borderRadius: 2,
+                    background:
+                      "linear-gradient(90deg, #e3f2fd 0%, #e8f5e9 100%)",
+                    color: "#1976d2",
+                    borderColor: "#1976d2",
+                    "&:hover": { background: "#e3f2fd" },
+                  }}
+                >
+                  {exportBusy ? "Exporting…" : "Export (Excel)"}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+
+          <Tooltip title="Logout">
+            <span>
+              <Button
+                variant="outlined"
+                color="error"
+                startIcon={<LogoutIcon />}
+                onClick={handleLogout}
+                sx={{
+                  fontWeight: 700,
+                  borderRadius: 2,
+                  borderColor: "#d32f2f",
+                  color: "#d32f2f",
+                  background:
+                    "linear-gradient(90deg, #fffde7 0%, #ffcdd2 100%)",
+                  "&:hover": { background: "#ffcdd2" },
+                }}
+              >
+                Logout
+              </Button>
+            </span>
+          </Tooltip>
+        </Stack>
+
+        {/* Grid */}
         {selectedRoleId && (
-          <Box sx={{ mt: 4 }}>
+          <Box sx={{ mt: 2 }}>
             <Typography
               variant="h6"
               sx={{ mb: 2, color: "#388e3c", fontWeight: "bold" }}
             >
               Inventory Details
             </Typography>
-
             <div style={{ height: 560 }}>
               <DataGrid
                 rows={rows}
@@ -379,9 +480,7 @@ export default function Home() {
                     background:
                       "linear-gradient(90deg, rgba(25,118,210,0.12), rgba(56,142,60,0.12))",
                   },
-                  "& .dg-cell": {
-                    fontWeight: 500,
-                  },
+                  "& .dg-cell": { fontWeight: 500 },
                   "& .row-even": { backgroundColor: "#fafafa" },
                   "& .row-odd": { backgroundColor: "#ffffff" },
                   "& .MuiDataGrid-row:hover": {

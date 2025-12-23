@@ -1,276 +1,307 @@
-// src/pages/Transfer.jsx
+// src/pages/Transfer.js
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import {
   Box,
-  Card,
-  CardContent,
+  Paper,
   Typography,
   TextField,
-  MenuItem,
   Button,
-  Grid,
   Alert,
-  Divider,
+  Stack,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
-import { getInventory, getWarehouses, updateProduct } from "../services/api";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { transferProduct, getInventory } from "../services/api";
 
-export default function TransferPage() {
+export default function Transfer() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const productIdFromQuery = Number(searchParams.get("productId") || 0);
+  const location = useLocation();
 
-  // Data state
-  const [loading, setLoading] = useState(true);
-  const [warehouses, setWarehouses] = useState([]);
-  const [products, setProducts] = useState([]);
+  // Prefer full row from router state; else use productId query param
+  const stateProduct = location.state?.product ?? null;
+  const productIdParam = useMemo(() => {
+    const fromState =
+      stateProduct?.ProductId ?? stateProduct?.productId ?? undefined;
+    const fromQuery = Number(searchParams.get("productId") ?? 0) || undefined;
+    return fromState ?? fromQuery ?? 0;
+  }, [searchParams, stateProduct]);
 
-  // Form state
-  const [selectedProductId, setSelectedProductId] = useState(
-    productIdFromQuery ? String(productIdFromQuery) : ""
+  // Form state (prefill from state if available)
+  const [productId, setProductId] = useState(productIdParam || 0);
+  const [name, setName] = useState(
+    stateProduct?.Name ?? stateProduct?.name ?? ""
   );
-  const [selectedToWarehouseId, setSelectedToWarehouseId] = useState("");
-
-  // UI feedback
-  const [successMsg, setSuccessMsg] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
-
-  // Derived maps
-  const warehouseMap = useMemo(
-    () =>
-      new Map(
-        (warehouses ?? []).map((w) => [Number(w.WarehouseId), w.Location])
-      ),
-    [warehouses]
+  const [price, setPrice] = useState(
+    stateProduct?.Price ?? stateProduct?.price ?? ""
+  );
+  const [stock, setStock] = useState(
+    stateProduct?.Stock ?? stateProduct?.stock ?? ""
   );
 
-  const productMap = useMemo(
-    () => new Map((products ?? []).map((p) => [Number(p.ProductId), p])),
-    [products]
+  // Warehouses: current (disabled) + destination dropdown
+  const [currentWarehouseId, setCurrentWarehouseId] = useState(
+    stateProduct?.WarehouseId ?? stateProduct?.warehouseId ?? ""
   );
+  const [currentWarehouseLabel, setCurrentWarehouseLabel] = useState(
+    stateProduct?.Location ?? stateProduct?.location ?? ""
+  );
+  const [destWarehouseId, setDestWarehouseId] = useState("");
+  const [warehouseOptions, setWarehouseOptions] = useState([]); // [{id, label}]
 
-  // Load inventory & warehouses (uses token via axios interceptor)
+  // UI
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // On mount: If only productId is present (no state), fetch and prefill product & current warehouse
   useEffect(() => {
-    let mounted = true;
-    async function load() {
+    (async () => {
+      if (stateProduct || !productIdParam) return;
+
       try {
-        setLoading(true);
-        const [wh, inv] = await Promise.all([getWarehouses(), getInventory()]);
-        if (!mounted) return;
-        setWarehouses(wh || []);
-        setProducts(inv || []);
-      } catch (err) {
-        if (!mounted) return;
-        setErrorMsg(
-          `Failed to load data: ${err?.response?.data || err?.message || err}`
+        const list = await getInventory();
+        const found = (list ?? []).find(
+          (p) => Number(p.productId ?? p.ProductId) === Number(productIdParam)
         );
-      } finally {
-        if (mounted) setLoading(false);
+        if (found) {
+          setProductId(Number(found.productId ?? found.ProductId));
+          const wid = found.warehouseId ?? found.WarehouseId ?? "";
+          setCurrentWarehouseId(wid);
+          setCurrentWarehouseLabel(found.location ?? found.Location ?? "");
+          setName(found.name ?? found.Name ?? "");
+          setPrice(found.price ?? found.Price ?? "");
+          setStock(found.stock ?? found.Stock ?? "");
+        } else {
+          setError("Product not found in current inventory.");
+        }
+      } catch (e) {
+        setError("Unable to load product details.");
+        console.log("[Transfer] prefill fetch error:", e);
       }
-    }
-    load();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productIdParam]);
 
-  // Available "To" warehouses: exclude current product warehouse
-  const availableToWarehouses = useMemo(() => {
-    if (!selectedProductId) return warehouses;
-    const p = productMap.get(Number(selectedProductId));
-    if (!p) return warehouses;
-    const currentWid = Number(p.Warehouse?.WarehouseId ?? p.WarehouseId);
-    return (warehouses ?? []).filter(
-      (w) => Number(w.WarehouseId) !== currentWid
-    );
-  }, [selectedProductId, warehouses, productMap]);
+  // Build destination dropdown from **entire grid** (unique warehouses)
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await getInventory();
+        // Extract unique warehouses by (warehouseId, location)
+        const uniq = new Map();
+        (list ?? []).forEach((row) => {
+          const wid = Number(row.warehouseId ?? row.WarehouseId);
+          const loc = row.location ?? row.Location ?? "";
+          if (!Number.isNaN(wid) && wid > 0) {
+            const key = `${wid}|${loc}`;
+            if (!uniq.has(key))
+              uniq.set(key, { id: wid, label: loc || `Warehouse ${wid}` });
+          }
+        });
 
-  async function onSubmit(e) {
+        let options = Array.from(uniq.values());
+        // If we know the current warehouse, remove it from the destination list
+        if (currentWarehouseId) {
+          const cur = Number(currentWarehouseId);
+          options = options.filter((w) => Number(w.id) !== cur);
+        }
+
+        // Sort options by label for nicer UX
+        options.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+
+        setWarehouseOptions(options);
+      } catch (e) {
+        setError("Unable to load warehouse list.");
+        console.log("[Transfer] warehouse build error:", e);
+      }
+    })();
+  }, [currentWarehouseId]);
+
+  const onUpdate = async (e) => {
     e.preventDefault();
-    setSuccessMsg("");
-    setErrorMsg("");
+    setError("");
 
-    if (!selectedProductId || !selectedToWarehouseId) {
-      setErrorMsg("Please select both Product and Destination Warehouse.");
+    if (!productId) {
+      setError("Missing Product Id.");
+      return;
+    }
+    if (!destWarehouseId) {
+      setError("Please select a destination warehouse.");
+      return;
+    }
+    if (Number(destWarehouseId) === Number(currentWarehouseId)) {
+      setError(
+        "Destination warehouse cannot be the same as current warehouse."
+      );
       return;
     }
 
+    const payload = {
+      // PascalCase to match typical ASP.NET Core model binding
+      ProductId: Number(productId),
+      WarehouseId: Number(destWarehouseId),
+      Name: name || undefined,
+      Price: price !== "" ? Number(price) : undefined,
+      Stock: stock !== "" ? Number(stock) : undefined,
+    };
+
     try {
-      const prod = productMap.get(Number(selectedProductId));
-      if (!prod) {
-        setErrorMsg("Product not found.");
-        return;
-      }
-
-      // Build the payload expected by your API's Update endpoint
-      // NOTE: keep PascalCase property names to match your backend DTO/model where applicable
-      const updated = {
-        ProductId: prod.ProductId,
-        Name: prod.Name,
-        Price: prod.Price,
-        Stock: prod.Stock,
-        WarehouseId: Number(selectedToWarehouseId),
-        // Include nested Warehouse object only if your API tolerates it;
-        // many APIs ignore navigation properties in updates.
-        // Warehouse: { WarehouseId: Number(selectedToWarehouseId) },
-      };
-
-      // Manager-only endpoint; JWT is added by axios interceptor
-      await updateProduct(updated);
-
-      // Optimistic UI update in the client
-      const fromLoc =
-        warehouseMap.get(
-          Number(prod?.Warehouse?.WarehouseId ?? prod?.WarehouseId)
-        ) || "—";
-      const toLoc = warehouseMap.get(Number(selectedToWarehouseId)) || "—";
-
-      setSuccessMsg(
-        `Updated: "${prod.Name}" moved from ${fromLoc} to ${toLoc}.`
-      );
-
-      setProducts((prev) =>
-        prev.map((p) =>
-          Number(p.ProductId) === Number(selectedProductId)
-            ? {
-                ...p,
-                WarehouseId: Number(selectedToWarehouseId),
-                Warehouse: {
-                  ...(p.Warehouse || {}),
-                  WarehouseId: Number(selectedToWarehouseId),
-                  Location: toLoc,
-                },
-              }
-            : p
-        )
-      );
-
-      // Reset form
-      setSelectedProductId("");
-      setSelectedToWarehouseId("");
+      setBusy(true);
+      const res = await transferProduct(payload);
+      console.log("[Transfer] success:", res);
+      navigate("/", { replace: true });
     } catch (err) {
-      setErrorMsg(err?.response?.data || err?.message || "Update failed.");
+      const msg = err?.response?.data ?? err?.message ?? "Transfer failed";
+      setError(String(msg));
+    } finally {
+      setBusy(false);
     }
-  }
+  };
+
+  const onCancel = () => navigate("/", { replace: true });
 
   return (
-    <Box sx={{ p: 3, maxWidth: 1100, mx: "auto" }}>
-      <Typography variant="h4" gutterBottom>
-        Transfer Product
-      </Typography>
-      <Alert severity="info" sx={{ mb: 2 }}>
-        This page uses your JWT token (from login) to call the API.
-      </Alert>
+    <Box
+      sx={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        p: 2,
+        background:
+          "linear-gradient(135deg, #f0f4ff 0%, #e8f5e9 50%, #fffde7 100%)",
+      }}
+    >
+      <Paper
+        elevation={6}
+        component="form"
+        onSubmit={onUpdate}
+        sx={{ width: "100%", maxWidth: 720, borderRadius: 3, p: 4 }}
+      >
+        <Typography
+          variant="h5"
+          sx={{ fontWeight: 700, mb: 2, color: "primary.main" }}
+        >
+          Transfer Product
+        </Typography>
 
-      {loading ? (
-        <Typography>Loading…</Typography>
-      ) : (
-        <Grid container spacing={3}>
-          {/* Form card */}
-          <Grid item xs={12} md={6}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Transfer Form
-                </Typography>
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
 
-                {errorMsg && (
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    {errorMsg}
-                  </Alert>
-                )}
-                {successMsg && (
-                  <Alert severity="success" sx={{ mb: 2 }}>
-                    {successMsg}
-                  </Alert>
-                )}
+        {/* Product basics */}
+        <TextField
+          label="Product Id"
+          value={productId || ""}
+          fullWidth
+          sx={{ mb: 2 }}
+          disabled
+        />
 
-                <Box component="form" onSubmit={onSubmit}>
-                  <TextField
-                    select
-                    label="Product"
-                    fullWidth
-                    size="small"
-                    value={selectedProductId}
-                    onChange={(e) => setSelectedProductId(e.target.value)}
-                    sx={{ mb: 2 }}
-                  >
-                    {(products ?? []).map((p) => (
-                      <MenuItem key={p.ProductId} value={p.ProductId}>
-                        {p.Name} (Stock: {p.Stock ?? "—"}) — Current:{" "}
-                        {warehouseMap.get(
-                          Number(p.Warehouse?.WarehouseId ?? p.WarehouseId)
-                        ) || "—"}
-                      </MenuItem>
-                    ))}
-                  </TextField>
+        {/* Current warehouse (disabled) */}
+        <FormControl size="small" sx={{ mb: 2 }}>
+          <InputLabel id="current-warehouse-label">
+            Current Warehouse
+          </InputLabel>
+          <Select
+            labelId="current-warehouse-label"
+            label="Current Warehouse"
+            value={currentWarehouseId || ""}
+            disabled
+            sx={{
+              fontWeight: 700,
+              ".Mui-disabled": { color: "text.primary" },
+            }}
+          >
+            <MenuItem value="">
+              <em>— Unknown —</em>
+            </MenuItem>
+            {currentWarehouseId && (
+              <MenuItem value={Number(currentWarehouseId)}>
+                {currentWarehouseLabel
+                  ? `${currentWarehouseLabel} (ID: ${currentWarehouseId})`
+                  : `ID: ${currentWarehouseId}`}
+              </MenuItem>
+            )}
+          </Select>
+        </FormControl>
 
-                  <TextField
-                    select
-                    label="Destination Warehouse"
-                    fullWidth
-                    size="small"
-                    value={selectedToWarehouseId}
-                    onChange={(e) => setSelectedToWarehouseId(e.target.value)}
-                    sx={{ mb: 2 }}
-                    disabled={!selectedProductId}
-                  >
-                    {availableToWarehouses.map((w) => (
-                      <MenuItem key={w.WarehouseId} value={w.WarehouseId}>
-                        {w.Location}
-                      </MenuItem>
-                    ))}
-                  </TextField>
+        {/* Destination warehouse (dropdown from entire grid) */}
+        <FormControl size="small" sx={{ mb: 2 }}>
+          <InputLabel id="dest-warehouse-label">
+            Destination Warehouse *
+          </InputLabel>
+          <Select
+            labelId="dest-warehouse-label"
+            label="Destination Warehouse *"
+            value={destWarehouseId || ""}
+            onChange={(e) => setDestWarehouseId(e.target.value)}
+            required
+          >
+            <MenuItem value="">
+              <em>— Select warehouse —</em>
+            </MenuItem>
+            {warehouseOptions.map((w) => (
+              <MenuItem key={w.id} value={w.id}>
+                {w.label ? `${w.label} (ID: ${w.id})` : `ID: ${w.id}`}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
 
-                  <Button type="submit" variant="contained">
-                    Transfer
-                  </Button>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
+        {/* Optional fields */}
+        <TextField
+          label="Name (optional)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          fullWidth
+          sx={{ mb: 2 }}
+        />
 
-          {/* Inventory preview */}
-          <Grid item xs={12} md={6}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Inventory Snapshot
-                </Typography>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mb: 1 }}
-                >
-                  Shows current warehouse per product. After a successful update
-                  we refresh the client-side snapshot.
-                </Typography>
-                <Divider sx={{ mb: 2 }} />
+        <TextField
+          label="Price (optional)"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          type="number"
+          fullWidth
+          sx={{ mb: 2 }}
+        />
 
-                {(products ?? []).map((p) => (
-                  <Box
-                    key={p.ProductId}
-                    sx={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      py: 1,
-                      borderBottom: "1px solid #eee",
-                    }}
-                  >
-                    <span>
-                      {p.Name} (#{p.ProductId}) — Stock: {p.Stock ?? "—"}
-                    </span>
-                    <strong>
-                      {warehouseMap.get(
-                        Number(p.Warehouse?.WarehouseId ?? p.WarehouseId)
-                      ) || "—"}
-                    </strong>
-                  </Box>
-                ))}
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
+        <TextField
+          label="Stock (optional)"
+          value={stock}
+          onChange={(e) => setStock(e.target.value)}
+          type="number"
+          fullWidth
+          sx={{ mb: 3 }}
+        />
+
+        {/* Actions */}
+        <Stack direction="row" spacing={2} justifyContent="flex-end">
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={onCancel}
+            disabled={busy}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            disabled={busy}
+            sx={{ fontWeight: 700 }}
+          >
+            {busy ? "Updating…" : "Update"}
+          </Button>
+        </Stack>
+      </Paper>
     </Box>
   );
 }
