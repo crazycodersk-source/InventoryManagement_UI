@@ -5,303 +5,278 @@ import {
   Paper,
   Typography,
   TextField,
-  Button,
-  Alert,
-  Stack,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
+  Stack,
+  Button,
+  Alert,
+  Snackbar,
 } from "@mui/material";
-import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
-import { transferProduct, getInventory } from "../services/api";
+import { useLocation, useNavigate } from "react-router-dom";
+import { transferProduct } from "../services/api";
+
+// Classy thumbs-up icon
+import ThumbUpAltRoundedIcon from "@mui/icons-material/ThumbUpAltRounded";
 
 export default function Transfer() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const location = useLocation();
 
-  // Prefer full row from router state; else use productId query param
-  const stateProduct = location.state?.product ?? null;
-  const productIdParam = useMemo(() => {
-    const fromState =
-      stateProduct?.ProductId ?? stateProduct?.productId ?? undefined;
-    const fromQuery = Number(searchParams.get("productId") ?? 0) || undefined;
-    return fromState ?? fromQuery ?? 0;
-  }, [searchParams, stateProduct]);
+  // Product row passed from Home (router state)
+  const row = location?.state?.product ?? {};
+  const raw = row._raw ?? row;
 
-  // Form state (prefill from state if available)
-  const [productId, setProductId] = useState(productIdParam || 0);
-  const [name, setName] = useState(
-    stateProduct?.Name ?? stateProduct?.name ?? ""
-  );
-  const [price, setPrice] = useState(
-    stateProduct?.Price ?? stateProduct?.price ?? ""
-  );
-  const [stock, setStock] = useState(
-    stateProduct?.Stock ?? stateProduct?.stock ?? ""
-  );
+  // Robust field extraction (supports PascalCase/camelCase)
+  const productId =
+    row.ProductId ??
+    row.productId ??
+    row.id ??
+    raw.ProductId ??
+    raw.productId ??
+    raw.id ??
+    0;
 
-  // Warehouses: current (disabled) + destination dropdown
-  const [currentWarehouseId, setCurrentWarehouseId] = useState(
-    stateProduct?.WarehouseId ?? stateProduct?.warehouseId ?? ""
-  );
-  const [currentWarehouseLabel, setCurrentWarehouseLabel] = useState(
-    stateProduct?.Location ?? stateProduct?.location ?? ""
-  );
-  const [destWarehouseId, setDestWarehouseId] = useState("");
-  const [warehouseOptions, setWarehouseOptions] = useState([]); // [{id, label}]
+  const name = (row.Name ?? row.name ?? raw.Name ?? raw.name ?? "").toString();
 
-  // UI
-  const [error, setError] = useState("");
+  const price = (() => {
+    const v = row.Price ?? row.price ?? raw.Price ?? raw.price ?? 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? Number(n.toFixed(2)) : 0;
+  })();
+
+  const stock = (() => {
+    const v = row.Stock ?? row.stock ?? raw.Stock ?? raw.stock ?? 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.trunc(n) : 0;
+  })();
+
+  const currentWarehouseId =
+    row.WarehouseId ??
+    row.warehouseId ??
+    raw.WarehouseId ??
+    raw.warehouseId ??
+    null;
+
+  const currentWarehouseName = (
+    row.Warehouse?.Name ??
+    raw.Warehouse?.Name ??
+    row.Location ??
+    row.location ??
+    raw.Location ??
+    raw.location ??
+    ""
+  ).toString();
+
+  const [destinationWarehouseId, setDestinationWarehouseId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [snackOpen, setSnackOpen] = useState(false);
+  const [snackMsg, setSnackMsg] = useState("");
 
-  // On mount: If only productId is present (no state), fetch and prefill product & current warehouse
+  // Placeholder warehouse list (replace with API if you have one)
+  const warehouses = useMemo(
+    () => [
+      { id: 1, name: "Delhi" },
+      { id: 2, name: "Mumbai" },
+      { id: 3, name: "Kolkata" },
+      { id: 4, name: "Chennai" },
+    ],
+    []
+  );
+
+  // Default destination to a different warehouse than current
   useEffect(() => {
-    (async () => {
-      if (stateProduct || !productIdParam) return;
-
-      try {
-        const list = await getInventory();
-        const found = (list ?? []).find(
-          (p) => Number(p.productId ?? p.ProductId) === Number(productIdParam)
-        );
-        if (found) {
-          setProductId(Number(found.productId ?? found.ProductId));
-          const wid = found.warehouseId ?? found.WarehouseId ?? "";
-          setCurrentWarehouseId(wid);
-          setCurrentWarehouseLabel(found.location ?? found.Location ?? "");
-          setName(found.name ?? found.Name ?? "");
-          setPrice(found.price ?? found.Price ?? "");
-          setStock(found.stock ?? found.Stock ?? "");
-        } else {
-          setError("Product not found in current inventory.");
-        }
-      } catch (e) {
-        setError("Unable to load product details.");
-        console.log("[Transfer] prefill fetch error:", e);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productIdParam]);
-
-  // Build destination dropdown from **entire grid** (unique warehouses)
-  useEffect(() => {
-    (async () => {
-      try {
-        const list = await getInventory();
-        // Extract unique warehouses by (warehouseId, location)
-        const uniq = new Map();
-        (list ?? []).forEach((row) => {
-          const wid = Number(row.warehouseId ?? row.WarehouseId);
-          const loc = row.location ?? row.Location ?? "";
-          if (!Number.isNaN(wid) && wid > 0) {
-            const key = `${wid}|${loc}`;
-            if (!uniq.has(key))
-              uniq.set(key, { id: wid, label: loc || `Warehouse ${wid}` });
-          }
-        });
-
-        let options = Array.from(uniq.values());
-        // If we know the current warehouse, remove it from the destination list
-        if (currentWarehouseId) {
-          const cur = Number(currentWarehouseId);
-          options = options.filter((w) => Number(w.id) !== cur);
-        }
-
-        // Sort options by label for nicer UX
-        options.sort((a, b) => String(a.label).localeCompare(String(b.label)));
-
-        setWarehouseOptions(options);
-      } catch (e) {
-        setError("Unable to load warehouse list.");
-        console.log("[Transfer] warehouse build error:", e);
-      }
-    })();
-  }, [currentWarehouseId]);
-
-  const onUpdate = async (e) => {
-    e.preventDefault();
-    setError("");
-
-    if (!productId) {
-      setError("Missing Product Id.");
-      return;
+    const firstDifferent = warehouses.find((w) => w.id !== currentWarehouseId);
+    if (firstDifferent && !destinationWarehouseId) {
+      setDestinationWarehouseId(String(firstDifferent.id));
     }
-    if (!destWarehouseId) {
-      setError("Please select a destination warehouse.");
-      return;
-    }
-    if (Number(destWarehouseId) === Number(currentWarehouseId)) {
-      setError(
-        "Destination warehouse cannot be the same as current warehouse."
-      );
-      return;
-    }
+  }, [warehouses, currentWarehouseId, destinationWarehouseId]);
 
-    const payload = {
-      // PascalCase to match typical ASP.NET Core model binding
-      ProductId: Number(productId),
-      WarehouseId: Number(destWarehouseId),
-      Name: name || undefined,
-      Price: price !== "" ? Number(price) : undefined,
-      Stock: stock !== "" ? Number(stock) : undefined,
-    };
+  const disabledFieldProps = {
+    fullWidth: true,
+    disabled: true,
+    variant: "outlined",
+  };
 
+  const handleUpdate = async () => {
     try {
       setBusy(true);
-      const res = await transferProduct(payload);
-      console.log("[Transfer] success:", res);
-      navigate("/", { replace: true });
+      setError("");
+      setSnackMsg("");
+      const destId = Number(destinationWarehouseId);
+      if (!productId || !destId) {
+        throw new Error("Select a valid destination warehouse.");
+      }
+
+      // --- Minimal DTO payload { productId, warehouseId } ---
+      const dto = {
+        productId: Number(productId),
+        warehouseId: Number(destId),
+      };
+
+      // Treat any 2xx as success; axios throws on non-2xx
+      await transferProduct(dto);
+
+      setSnackMsg("Transfer successful!");
+      setSnackOpen(true); // show pop; navigation happens on close
     } catch (err) {
-      const msg = err?.response?.data ?? err?.message ?? "Transfer failed";
-      setError(String(msg));
+      const status = err?.response?.status;
+      const data = err?.response?.data;
+      const msg =
+        (typeof data === "string" && data) ||
+        data?.title ||
+        data?.detail ||
+        (data?.errors && JSON.stringify(data.errors, null, 2)) ||
+        err?.message ||
+        "Transfer failed";
+      setError(`Request failed (${status ?? "unknown"}).\n${msg}`);
     } finally {
       setBusy(false);
     }
   };
 
-  const onCancel = () => navigate("/", { replace: true });
+  const handleCancel = () => navigate("/home", { replace: true });
+
+  const handleSnackClose = () => {
+    setSnackOpen(false);
+    // Navigate to Home and pass refresh signal + toast
+    navigate("/home", {
+      replace: true,
+      state: { refresh: true, toast: "Transfer is successful!" },
+    });
+  };
 
   return (
     <Box
       sx={{
-        minHeight: "100vh",
         display: "flex",
-        alignItems: "center",
         justifyContent: "center",
+        alignItems: "center",
+        minHeight: "100vh",
+        backgroundColor: "#f6f8fb",
         p: 2,
-        background:
-          "linear-gradient(135deg, #f0f4ff 0%, #e8f5e9 50%, #fffde7 100%)",
       }}
     >
       <Paper
-        elevation={6}
-        component="form"
-        onSubmit={onUpdate}
-        sx={{ width: "100%", maxWidth: 720, borderRadius: 3, p: 4 }}
+        elevation={3}
+        sx={{
+          p: 4,
+          width: "95%",
+          maxWidth: 560,
+          borderRadius: 3,
+          backgroundColor: "#fff",
+        }}
       >
         <Typography
           variant="h5"
-          sx={{ fontWeight: 700, mb: 2, color: "primary.main" }}
+          sx={{
+            mb: 3,
+            fontWeight: 600,
+            color: "#2b3a4a",
+            textAlign: "center",
+            letterSpacing: 0.2,
+          }}
         >
           Transfer Product
         </Typography>
 
         {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
+          <Alert severity="error" sx={{ mb: 2, whiteSpace: "pre-wrap" }}>
             {error}
           </Alert>
         )}
 
-        {/* Product basics */}
-        <TextField
-          label="Product Id"
-          value={productId || ""}
-          fullWidth
-          sx={{ mb: 2 }}
-          disabled
-        />
-
-        {/* Current warehouse (disabled) */}
-        <FormControl size="small" sx={{ mb: 2 }}>
-          <InputLabel id="current-warehouse-label">
-            Current Warehouse
-          </InputLabel>
-          <Select
-            labelId="current-warehouse-label"
+        <Stack spacing={2}>
+          {/* Display-only fields */}
+          <TextField
+            label="Product Id"
+            value={productId}
+            {...disabledFieldProps}
+          />
+          <TextField
             label="Current Warehouse"
-            value={currentWarehouseId || ""}
-            disabled
-            sx={{
-              fontWeight: 700,
-              ".Mui-disabled": { color: "text.primary" },
-            }}
+            value={
+              currentWarehouseName
+                ? `${currentWarehouseName} (ID: ${currentWarehouseId ?? "—"})`
+                : `ID: ${currentWarehouseId ?? "—"}`
+            }
+            {...disabledFieldProps}
+          />
+          <TextField label="Name" value={name} {...disabledFieldProps} />
+          <TextField label="Price" value={price} {...disabledFieldProps} />
+          <TextField label="Stock" value={stock} {...disabledFieldProps} />
+
+          {/* Destination only (enabled) */}
+          <FormControl fullWidth variant="outlined">
+            <InputLabel id="dest-wh-label">Destination Warehouse</InputLabel>
+            <Select
+              labelId="dest-wh-label"
+              label="Destination Warehouse"
+              value={String(destinationWarehouseId)}
+              onChange={(e) => setDestinationWarehouseId(e.target.value)}
+            >
+              {warehouses
+                .filter((w) => w.id !== currentWarehouseId)
+                .map((w) => (
+                  <MenuItem key={w.id} value={String(w.id)}>
+                    {w.name} (ID: {w.id})
+                  </MenuItem>
+                ))}
+            </Select>
+          </FormControl>
+
+          <Stack
+            direction="row"
+            spacing={2}
+            justifyContent="flex-end"
+            sx={{ mt: 2 }}
           >
-            <MenuItem value="">
-              <em>— Unknown —</em>
-            </MenuItem>
-            {currentWarehouseId && (
-              <MenuItem value={Number(currentWarehouseId)}>
-                {currentWarehouseLabel
-                  ? `${currentWarehouseLabel} (ID: ${currentWarehouseId})`
-                  : `ID: ${currentWarehouseId}`}
-              </MenuItem>
-            )}
-          </Select>
-        </FormControl>
-
-        {/* Destination warehouse (dropdown from entire grid) */}
-        <FormControl size="small" sx={{ mb: 2 }}>
-          <InputLabel id="dest-warehouse-label">
-            Destination Warehouse *
-          </InputLabel>
-          <Select
-            labelId="dest-warehouse-label"
-            label="Destination Warehouse *"
-            value={destWarehouseId || ""}
-            onChange={(e) => setDestWarehouseId(e.target.value)}
-            required
-          >
-            <MenuItem value="">
-              <em>— Select warehouse —</em>
-            </MenuItem>
-            {warehouseOptions.map((w) => (
-              <MenuItem key={w.id} value={w.id}>
-                {w.label ? `${w.label} (ID: ${w.id})` : `ID: ${w.id}`}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        {/* Optional fields */}
-        <TextField
-          label="Name (optional)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          fullWidth
-          sx={{ mb: 2 }}
-        />
-
-        <TextField
-          label="Price (optional)"
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          type="number"
-          fullWidth
-          sx={{ mb: 2 }}
-        />
-
-        <TextField
-          label="Stock (optional)"
-          value={stock}
-          onChange={(e) => setStock(e.target.value)}
-          type="number"
-          fullWidth
-          sx={{ mb: 3 }}
-        />
-
-        {/* Actions */}
-        <Stack direction="row" spacing={2} justifyContent="flex-end">
-          <Button
-            variant="outlined"
-            color="inherit"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="contained"
-            color="primary"
-            disabled={busy}
-            sx={{ fontWeight: 700 }}
-          >
-            {busy ? "Updating…" : "Update"}
-          </Button>
+            <Button variant="outlined" color="inherit" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="success"
+              onClick={handleUpdate}
+              disabled={busy}
+            >
+              {busy ? "Updating..." : "Update"}
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
+
+      {/* Classy, professional success popup */}
+      <Snackbar
+        open={snackOpen}
+        autoHideDuration={1800}
+        onClose={handleSnackClose}
+        anchorOrigin={{ vertical: "top", horizontal: "center" }}
+      >
+        <Alert
+          onClose={handleSnackClose}
+          severity="success"
+          icon={<ThumbUpAltRoundedIcon sx={{ color: "#2e7d32" }} />}
+          variant="outlined"
+          sx={{
+            borderColor: "#a5d6a7",
+            backgroundColor: "#e8f5e9",
+            color: "#1b5e20",
+            fontWeight: 500,
+            fontSize: "1.05rem",
+            boxShadow: 1,
+            borderRadius: 2,
+            alignItems: "center",
+            letterSpacing: 0.1,
+            minWidth: 280,
+            justifyContent: "center",
+          }}
+        >
+          Transfer successful!
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

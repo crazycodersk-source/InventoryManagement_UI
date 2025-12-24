@@ -2,7 +2,7 @@
 import axios from "axios";
 
 const API_BASE = (
-  process.env.REACT_APP_API_BASE || "http://localhost:5115/api"
+  process.env.REACT_APP_API_BASE ?? "http://localhost:5115/api"
 ).replace(/\/+$/, "");
 
 // Session keys
@@ -11,7 +11,6 @@ const ROLE_KEY = "auth_role";
 
 // Axios instance
 const http = axios.create({ baseURL: API_BASE });
-
 function setAuthHeader(token) {
   if (token) {
     http.defaults.headers.common.Authorization = `Bearer ${token}`;
@@ -54,10 +53,17 @@ export async function getInventory() {
   const { data } = await http.get("/Inventory/GetAllInventory");
   return data;
 }
+
+// *** CHANGED: hits /Inventory/TransferProduct/transfer ***
 export async function transferProduct(productPayload) {
-  const { data } = await http.post("/Inventory/transfer", productPayload);
+  // productPayload shape: { productId: number, warehouseId: number }
+  const { data } = await http.post(
+    "/Inventory/TransferProduct/transfer",
+    productPayload
+  );
   return data;
 }
+
 export async function exportInventoryReport() {
   const res = await http.get("/Inventory/GetInventoryReport", {
     responseType: "blob",
