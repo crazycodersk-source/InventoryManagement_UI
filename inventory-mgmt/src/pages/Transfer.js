@@ -1,4 +1,3 @@
-// src/pages/Transfer.js
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -16,8 +15,7 @@ import {
 } from "@mui/material";
 import { useLocation, useNavigate } from "react-router-dom";
 import { transferProduct } from "../services/api";
-
-// Classy thumbs-up icon
+import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import ThumbUpAltRoundedIcon from "@mui/icons-material/ThumbUpAltRounded";
 
 export default function Transfer() {
@@ -98,6 +96,21 @@ export default function Transfer() {
     fullWidth: true,
     disabled: true,
     variant: "outlined",
+    InputProps: {
+      sx: {
+        fontWeight: 600,
+        fontSize: 16,
+        borderRadius: 2,
+        color: "#1976d2",
+        background: "#fafafa",
+      },
+    },
+    InputLabelProps: {
+      sx: {
+        fontWeight: 700,
+        color: "#1976d2",
+      },
+    },
   };
 
   const handleUpdate = async () => {
@@ -155,28 +168,36 @@ export default function Transfer() {
         justifyContent: "center",
         alignItems: "center",
         minHeight: "100vh",
-        backgroundColor: "#f6f8fb",
+        background:
+          "linear-gradient(135deg, #e3f2fd 0%, #e8f5e9 50%, #fffde7 100%)",
         p: 2,
       }}
     >
       <Paper
-        elevation={3}
+        elevation={6}
         sx={{
           p: 4,
           width: "95%",
           maxWidth: 560,
-          borderRadius: 3,
-          backgroundColor: "#fff",
+          borderRadius: 4,
+          background:
+            "linear-gradient(120deg, #fffde7 0%, #e8f5e9 60%, #e3f2fd 100%)",
+          boxShadow: "0 8px 32px rgba(25,118,210,0.10)",
         }}
       >
+        <Box sx={{ textAlign: "center", mb: 2 }}>
+          <Inventory2OutlinedIcon
+            sx={{ fontSize: 40, color: "#1976d2", mb: 1 }}
+          />
+        </Box>
         <Typography
-          variant="h5"
+          variant="h4"
           sx={{
-            mb: 3,
-            fontWeight: 600,
-            color: "#2b3a4a",
+            fontWeight: "bold",
+            color: "#1976d2",
             textAlign: "center",
-            letterSpacing: 0.2,
+            fontFamily: "Segoe UI, Roboto, Arial, sans-serif",
+            mb: 1,
           }}
         >
           Transfer Product
@@ -210,17 +231,38 @@ export default function Transfer() {
 
           {/* Destination only (enabled) */}
           <FormControl fullWidth variant="outlined">
-            <InputLabel id="dest-wh-label">Destination Warehouse</InputLabel>
+            <InputLabel
+              id="dest-wh-label"
+              sx={{ fontWeight: 700, color: "#388e3c" }}
+            >
+              Destination Warehouse
+            </InputLabel>
             <Select
               labelId="dest-wh-label"
               label="Destination Warehouse"
               value={String(destinationWarehouseId)}
               onChange={(e) => setDestinationWarehouseId(e.target.value)}
+              sx={{
+                fontWeight: 700,
+                fontSize: 16,
+                borderRadius: 2,
+                color: "#1976d2",
+                background: "#fafafa",
+              }}
             >
               {warehouses
                 .filter((w) => w.id !== currentWarehouseId)
                 .map((w) => (
-                  <MenuItem key={w.id} value={String(w.id)}>
+                  <MenuItem
+                    key={w.id}
+                    value={String(w.id)}
+                    sx={{
+                      fontWeight: 700,
+                      color: "#388e3c",
+                      background: "#fff",
+                      borderRadius: 2,
+                    }}
+                  >
                     {w.name} (ID: {w.id})
                   </MenuItem>
                 ))}
@@ -233,7 +275,19 @@ export default function Transfer() {
             justifyContent="flex-end"
             sx={{ mt: 2 }}
           >
-            <Button variant="outlined" color="inherit" onClick={handleCancel}>
+            <Button
+              variant="outlined"
+              color="inherit"
+              onClick={handleCancel}
+              sx={{
+                fontWeight: 700,
+                borderRadius: 2,
+                background: "#fffde7",
+                color: "#e65100",
+                borderColor: "#e65100",
+                "&:hover": { background: "#ffe0b2" },
+              }}
+            >
               Cancel
             </Button>
             <Button
@@ -241,6 +295,14 @@ export default function Transfer() {
               color="success"
               onClick={handleUpdate}
               disabled={busy}
+              sx={{
+                fontWeight: 700,
+                borderRadius: 2,
+                background: "#388e3c",
+                color: "#fff",
+                boxShadow: "0 2px 8px #a5d6a7",
+                "&:hover": { background: "#2e7d32" },
+              }}
             >
               {busy ? "Updating..." : "Update"}
             </Button>
@@ -264,9 +326,9 @@ export default function Transfer() {
             borderColor: "#a5d6a7",
             backgroundColor: "#e8f5e9",
             color: "#1b5e20",
-            fontWeight: 500,
-            fontSize: "1.05rem",
-            boxShadow: 1,
+            fontWeight: 600,
+            fontSize: "1.1rem",
+            boxShadow: 2,
             borderRadius: 2,
             alignItems: "center",
             letterSpacing: 0.1,

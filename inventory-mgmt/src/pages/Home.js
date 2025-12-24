@@ -1,3 +1,4 @@
+// src/pages/Home.js
 import React, { useEffect, useMemo, useState } from "react";
 import { getInventory, exportInventoryReport, logout } from "../services/api";
 import {
@@ -32,26 +33,26 @@ const ROLE_OPTIONS = [
 export default function Home() {
   const navigate = useNavigate();
 
-  // Get role from session (set at login)
+  // Read auth from session (set at login)
   const savedRoleRaw = sessionStorage.getItem("auth_role"); // "WarehouseManager" | "WarehouseOperator"
   const token = sessionStorage.getItem("auth_token");
 
-  // Find the role object for UI
+  // Resolve role object for UI
   const selectedRole =
     ROLE_OPTIONS.find((r) => r.id === savedRoleRaw) || ROLE_OPTIONS[0];
 
   // UI state
   const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false); // grid/data loading
-  const [exportBusy, setExportBusy] = useState(false); // disables button during export
+  const [loading, setLoading] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // redirect to login if not authenticated
+  // Redirect to login if not authenticated
   useEffect(() => {
     if (!token) navigate("/login");
   }, [token, navigate]);
 
-  // fetch inventory after a valid role and token
+  // Fetch inventory on load
   useEffect(() => {
     if (!selectedRole?.id) return;
     if (!token) {
@@ -111,7 +112,7 @@ export default function Home() {
     navigate("/login", { replace: true });
   };
 
-  // Grid columns
+  // ---- Grid columns (professional UI + working Edit navigation) ----
   const allColumns = useMemo(
     () => [
       {
@@ -132,7 +133,15 @@ export default function Home() {
           <Chip
             label={params.value}
             size="small"
-            sx={{ bgcolor: "#e3f2fd", color: "#0d47a1", fontWeight: 600 }}
+            sx={{
+              fontWeight: 600,
+              fontSize: 14,
+              fontFamily: "inherit",
+              bgcolor: "#e3f2fd",
+              color: "#0d47a1",
+              borderRadius: 1.5,
+              px: 1,
+            }}
           />
         ),
       },
@@ -143,7 +152,25 @@ export default function Home() {
         type: "number",
         headerClassName: "dg-header",
         cellClassName: "dg-cell",
-        valueFormatter: (params) => Number(params.value).toFixed(2),
+        renderCell: (params) => (
+          <Chip
+            label={
+              typeof params.value === "number" && Number.isFinite(params.value)
+                ? params.value.toFixed(2)
+                : "—"
+            }
+            size="small"
+            sx={{
+              fontWeight: 600,
+              fontSize: 14,
+              fontFamily: "inherit",
+              bgcolor: "#f5f5f5",
+              color: "#333",
+              borderRadius: 1.5,
+              px: 1,
+            }}
+          />
+        ),
       },
       {
         field: "Stock",
@@ -152,17 +179,26 @@ export default function Home() {
         type: "number",
         headerClassName: "dg-header",
         cellClassName: "dg-cell",
-        renderCell: (params) => (
-          <Chip
-            label={params.value}
-            size="small"
-            sx={{
-              bgcolor: params.value > 20 ? "#e8f5e9" : "#fff3e0",
-              color: params.value > 20 ? "#1b5e20" : "#e65100",
-              fontWeight: 700,
-            }}
-          />
-        ),
+        renderCell: (params) => {
+          const value = Number(params.value) || 0;
+          const isHigh = value > 20; // <=20: orange (low), >20: green (ok)
+          return (
+            <Chip
+              label={value}
+              size="small"
+              sx={{
+                fontWeight: 700,
+                fontSize: 14,
+                fontFamily: "inherit",
+                bgcolor: isHigh ? "#e8f5e9" : "#fff3e0",
+                color: isHigh ? "#1b5e20" : "#e65100",
+                border: "1px solid #e0e0e0",
+                borderRadius: 1.5,
+                px: 1,
+              }}
+            />
+          );
+        },
       },
       {
         field: "Location",
@@ -176,7 +212,16 @@ export default function Home() {
             variant="outlined"
             label={params.value}
             size="small"
-            sx={{ borderColor: "#1976d2", color: "#1976d2", fontWeight: 600 }}
+            sx={{
+              fontWeight: 600,
+              fontSize: 14,
+              fontFamily: "inherit",
+              borderColor: "#1976d2",
+              color: "#1976d2",
+              bgcolor: "#f0f7fa",
+              borderRadius: 1.5,
+              px: 1,
+            }}
           />
         ),
       },
@@ -194,12 +239,14 @@ export default function Home() {
             <IconButton
               color="primary"
               size="small"
-              onClick={() =>
+              onClick={(e) => {
+                e.stopPropagation(); // ensure grid doesn’t intercept the click
                 navigate(`/transfer?productId=${params.row.ProductId}`, {
                   state: { product: params.row }, // prefill Transfer page
-                })
-              }
+                });
+              }}
               aria-label={`Transfer ${params.row.Name}`}
+              sx={{ borderRadius: 1.5 }}
             >
               <EditIcon fontSize="small" />
             </IconButton>
@@ -250,7 +297,7 @@ export default function Home() {
           backgroundColor: "#ffffff",
         }}
       >
-        {/* Welcome */}
+        {/* Heading */}
         <Typography
           variant="h4"
           sx={{
@@ -260,18 +307,7 @@ export default function Home() {
             textAlign: "center",
           }}
         >
-          Welcome to Your Smart Inventory Hub
-        </Typography>
-        <Typography
-          variant="subtitle1"
-          sx={{
-            mb: 4,
-            color: "#555",
-            textAlign: "center",
-            fontStyle: "italic",
-          }}
-        >
-          Manage, Track, and Transfer with Ease!
+          Inventory Details
         </Typography>
 
         {error && (
@@ -404,61 +440,54 @@ export default function Home() {
 
         {/* Grid */}
         {selectedRole?.id && (
-          <Box sx={{ mt: 2 }}>
-            <Typography
-              variant="h6"
-              sx={{ mb: 2, color: "#388e3c", fontWeight: "bold" }}
-            >
-              Inventory Details
-            </Typography>
-            <div style={{ height: 560 }}>
-              <DataGrid
-                rows={rows}
-                columns={visibleColumns}
-                loading={loading}
-                disableRowSelectionOnClick
-                getRowClassName={(params) =>
-                  params.indexRelativeToCurrentPage % 2 === 0
-                    ? "row-even"
-                    : "row-odd"
-                }
-                initialState={{
-                  pagination: { paginationModel: { pageSize: 10, page: 0 } },
-                  sorting: { sortModel: [{ field: "ProductId", sort: "asc" }] },
-                }}
-                pageSizeOptions={[5, 10, 25]}
-                sx={{
-                  borderRadius: 2,
-                  borderColor: "#e0e0e0",
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
-                  "& .MuiDataGrid-columnHeaders": {
-                    background:
-                      "linear-gradient(90deg, rgba(25,118,210,0.15), rgba(56,142,60,0.15))",
-                    borderBottom: "2px solid #e0e0e0",
-                  },
-                  "& .MuiDataGrid-columnHeaderTitle": {
-                    fontWeight: 800,
-                    color: "#0d47a1",
-                    letterSpacing: 0.2,
-                  },
-                  "& .dg-header": {
-                    background:
-                      "linear-gradient(90deg, rgba(25,118,210,0.12), rgba(56,142,60,0.12))",
-                  },
-                  "& .dg-cell": { fontWeight: 500 },
-                  "& .row-even": { backgroundColor: "#fafafa" },
-                  "& .row-odd": { backgroundColor: "#ffffff" },
-                  "& .MuiDataGrid-row:hover": {
-                    backgroundColor: "#f1f8e9",
-                    transition: "background-color 0.2s ease-in-out",
-                  },
-                  "& .MuiDataGrid-row.Mui-selected": {
-                    backgroundColor: "#e3f2fd",
-                  },
-                }}
-              />
-            </div>
-          </Box>
+          <div style={{ height: 560 }}>
+            <DataGrid
+              rows={rows}
+              columns={visibleColumns}
+              loading={loading}
+              disableRowSelectionOnClick
+              getRowClassName={(params) =>
+                params.indexRelativeToCurrentPage % 2 === 0
+                  ? "row-even"
+                  : "row-odd"
+              }
+              initialState={{
+                pagination: { paginationModel: { pageSize: 10, page: 0 } },
+                sorting: { sortModel: [{ field: "ProductId", sort: "asc" }] },
+              }}
+              pageSizeOptions={[5, 10, 25]}
+              sx={{
+                fontFamily: "Segoe UI, Roboto, Arial, sans-serif",
+                fontSize: 14,
+                borderRadius: 2,
+                borderColor: "#e0e0e0",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+                "& .MuiDataGrid-columnHeaders": {
+                  background:
+                    "linear-gradient(90deg, rgba(25,118,210,0.15), rgba(56,142,60,0.15))",
+                  borderBottom: "2px solid #e0e0e0",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  color: "#0d47a1",
+                  letterSpacing: 0.2,
+                },
+                "& .dg-header": {
+                  background:
+                    "linear-gradient(90deg, rgba(25,118,210,0.12), rgba(56,142,60,0.12))",
+                },
+                "& .dg-cell": { fontWeight: 500 },
+                "& .row-even": { backgroundColor: "#fafafa" },
+                "& .row-odd": { backgroundColor: "#ffffff" },
+                "& .MuiDataGrid-row:hover": {
+                  backgroundColor: "#f1f8e9",
+                  transition: "background-color 0.2s ease-in-out",
+                },
+                "& .MuiDataGrid-row.Mui-selected": {
+                  backgroundColor: "#e3f2fd",
+                },
+              }}
+            />
+          </div>
         )}
       </Paper>
     </Box>
